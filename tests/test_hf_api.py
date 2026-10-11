@@ -4919,6 +4919,57 @@ class TestHfApiVerifyChecksums:
         assert res.revision == commit and res.checked_count == 1 and not res.mismatches
 
 
+class _RequestSent(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    "call, expected_path",
+    [
+        (lambda api: api.get_webhook("w"), "/api/settings/webhooks/w"),
+        (lambda api: api.list_webhooks(), "/api/settings/webhooks"),
+        (
+            lambda api: api.create_webhook(url="https://x.test", watched=[{"type": "user", "name": "u"}]),
+            "/api/settings/webhooks",
+        ),
+        (lambda api: api.update_webhook("w", url="https://x.test"), "/api/settings/webhooks/w"),
+        (lambda api: api.enable_webhook("w"), "/api/settings/webhooks/w/enable"),
+        (lambda api: api.disable_webhook("w"), "/api/settings/webhooks/w/disable"),
+        (lambda api: api.delete_webhook("w"), "/api/settings/webhooks/w"),
+        (lambda api: list(api.list_pending_access_requests("u/r")), "/api/models/u/r/user-access-request/pending"),
+        (lambda api: list(api.list_accepted_access_requests("u/r")), "/api/models/u/r/user-access-request/accepted"),
+        (lambda api: list(api.list_rejected_access_requests("u/r")), "/api/models/u/r/user-access-request/rejected"),
+        (lambda api: api.accept_access_request("u/r", "x"), "/api/models/u/r/user-access-request/handle"),
+        (
+            lambda api: api.reject_access_request("u/r", "x", rejection_reason=None),
+            "/api/models/u/r/user-access-request/handle",
+        ),
+        (lambda api: api.cancel_access_request("u/r", "x"), "/api/models/u/r/user-access-request/handle"),
+        (lambda api: api.grant_access("u/r", "x"), "/api/models/u/r/user-access-request/grant"),
+        (lambda api: api.get_user_overview("u"), "/api/users/u/overview"),
+        (lambda api: api.get_organization_overview("o"), "/api/organizations/o/overview"),
+        (lambda api: list(api.list_organization_followers("o")), "/api/organizations/o/followers"),
+        (lambda api: list(api.list_organization_members("o")), "/api/organizations/o/members"),
+        (lambda api: list(api.list_user_followers("u")), "/api/users/u/followers"),
+        (lambda api: list(api.list_user_following("u")), "/api/users/u/following"),
+    ],
+)
+def test_methods_use_api_endpoint(call, expected_path: str) -> None:
+    """Regression test for #5135: these methods must send requests to `HfApi(endpoint=...)`."""
+    api = HfApi(endpoint="https://custom-hub.test", token="hf_fake_token")
+    sent_urls = []
+
+    def _send(self, request, **kwargs):
+        sent_urls.append(str(request.url))
+        raise _RequestSent()
+
+    with patch("httpx2.Client.send", _send):
+        with pytest.raises(_RequestSent):
+            call(api)
+
+    assert sent_urls[0].split("?")[0] == f"https://custom-hub.test{expected_path}"
+
+
 def _to_snake_case(name: str) -> str:
     """Convert camelCase to snake_case (e.g. 'downloadsAllTime' -> 'downloads_all_time', 'model-index' -> 'model_index')."""
     import re
